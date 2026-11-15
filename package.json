@@ -26,6 +26,7 @@
   "dependencies": {
     "@diffusionstudio/piper-wasm": "^1.0.0",
     "@diffusionstudio/vits-web": "^1.0.3",
+    "kokoro-js": "^1.2.1",
     "onnxruntime-web": "^1.22.0"
   }
 }

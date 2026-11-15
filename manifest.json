@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "Leitor de Páginas",
   "version": "1.0",
-  "description": "Extrai o texto da página e lê em voz alta (TTS), com vozes neurais offline (Piper) em português e inglês.",
+  "description": "Extrai o texto da página e lê em voz alta (TTS), com vozes neurais offline (Piper e Kokoro) em português e inglês.",
   "permissions": ["activeTab", "scripting", "tts", "storage", "offscreen"],
   "host_permissions": ["https://huggingface.co/*", "https://*.hf.co/*", "https://*.huggingface.co/*"],
   "background": { "service_worker": "background.js" },

@@ -57,7 +57,7 @@ const salvarEstado = () =>
     .catch(() => {});
 
 // "piper:<id>" = voz neural offline (roda no offscreen document); o resto são vozes do sistema.
-const ehNeural = (v) => typeof v === "string" && v.startsWith("piper:");
+const ehNeural = (v) => typeof v === "string" && /^(piper|kokoro):/.test(v);
 
 // Vozes neurais (Piper) rodam num offscreen document: service worker não toca áudio.
 async function garantirOffscreen() {
@@ -66,7 +66,7 @@ async function garantirOffscreen() {
   await chrome.offscreen.createDocument({
     url: "offscreen.html",
     reasons: ["AUDIO_PLAYBACK"],
-    justification: "Sintetizar e reproduzir voz neural (Piper) em segundo plano.",
+    justification: "Sintetizar e reproduzir voz neural (Piper/Kokoro) em segundo plano.",
   });
 }
 
@@ -87,7 +87,7 @@ function destacarBloco(idx) {
 
 function falar({ text, rate, voiceName, tabId }) {
   abaDestaque = tabId ?? null; // null = texto editado, sem mapa para destacar
-  leitura = { text, rate, voiceName, blocos: dividir(text), neural: ehNeural(voiceName), inicio: 0 };
+  leitura = { text, rate, voiceName, blocos: dividir(text, ehNeural(voiceName) ? 3000 : 200), neural: ehNeural(voiceName), inicio: 0 };
   falarDe(0);
   salvarLeitura();
 }
@@ -109,7 +109,38 @@ function pular(delta) {
   falarDe(Math.max(0, alvo));
 }
 
+// Troca velocidade/voz no meio da leitura: recomeça na frase em que estava (blocoAtual).
+let reiniciarAoContinuar = false;
+function reconfigurar({ rate, voiceName }) {
+  if (!leitura) return false;
+  if (rate != null) leitura.rate = rate;
+  if (voiceName) {
+    leitura.voiceName = voiceName;
+    const eraNeural = leitura.neural;
+    leitura.neural = ehNeural(voiceName);
+    if (eraNeural !== leitura.neural) {
+      // Tamanho dos blocos depende do tipo de voz: refaz a divisão e mantém a posição no texto.
+      const pos = leitura.blocos[blocoAtual]?.ini ?? 0;
+      leitura.blocos = dividir(leitura.text, leitura.neural ? 3000 : 200);
+      blocoAtual = Math.max(0, leitura.blocos.findLastIndex((b) => b.ini <= pos));
+    }
+  }
+  salvarLeitura();
+  const ativa = leitura.neural ? neuralAtivo : true;
+  if (!ativa && !pausado) return false; // leitura já terminou: só guarda a nova config
+  if (pausado) {
+    // Pausado: não começa a falar sozinho; aplica a config quando o usuário continuar.
+    chrome.tts.stop();
+    offscreen({ tipo: "p-parar" });
+    reiniciarAoContinuar = true;
+    return true;
+  }
+  falarDe(blocoAtual);
+  return true;
+}
+
 function falarDe(inicio) {
+  reiniciarAoContinuar = false;
   const { text, rate, voiceName, blocos } = leitura;
   const minha = ++sessao;
   chrome.tts.stop();
@@ -206,6 +237,9 @@ function tratar(msg, responder) {
       pular(msg.delta);
       responder({ ok: true });
       break;
+    case "config":
+      responder({ ok: reconfigurar(msg) });
+      break;
     case "pause":
       if (leitura?.neural) offscreen({ tipo: "p-pausar" });
       else chrome.tts.pause();
@@ -214,6 +248,12 @@ function tratar(msg, responder) {
       responder({ ok: true });
       break;
     case "resume":
+      if (reiniciarAoContinuar && leitura) {
+        reiniciarAoContinuar = false;
+        falarDe(blocoAtual);
+        responder({ ok: true });
+        break;
+      }
       if (leitura?.neural) offscreen({ tipo: "p-continuar" });
       else chrome.tts.resume();
       pausado = false;

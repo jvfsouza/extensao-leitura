@@ -17,8 +17,9 @@
 
 - 📄 **Extrai o texto principal** da página, ignorando menus, rodapés, anúncios e outros ruídos.
 - ✂️ **Lê só um trecho:** selecione o que quiser na página antes de clicar em *Ler*.
-- 🎙️ **Dois tipos de voz:**
+- 🎙️ **Três tipos de voz:**
   - **Vozes neurais offline (Piper):** 4 em português do Brasil e 5 em inglês (EUA e Reino Unido). Rodam no próprio navegador e são leves (~60 MB cada).
+  - **Vozes Kokoro (IA, offline):** modelo Kokoro-82M (82M parâmetros, Apache 2.0) com vozes em inglês (EUA/Reino Unido) e, em modo experimental, português do Brasil. Um único download de ~90 MB. Veja [Kokoro](#-kokoro-ia).
   - **Vozes do sistema** (`chrome.tts`): funcionam na hora, sem baixar nada, em qualquer idioma que o seu sistema tiver.
 - 🖍️ **Destaque ao vivo na página:** a frase atual fica marcada e a palavra também (nas vozes do sistema). A página rola sozinha acompanhando a leitura.
 - 🎨 **Cor e opacidade do destaque** ajustáveis no popup.
@@ -66,6 +67,19 @@ Depois, no Chrome:
 | 🇬🇧 English (UK) | Alba, Alan |
 
 O Piper tem muito mais vozes (alemão, espanhol, francês...). Para adicionar uma, veja [Dicas para quem for mexer](#-dicas-para-quem-for-mexer).
+
+## 🤖 Kokoro (IA)
+
+Segundo motor neural, ao lado do Piper (que continua igual). Usa o pacote [`kokoro-js`](https://github.com/hexgrad/kokoro) (v1.2.1) com o modelo [`onnx-community/Kokoro-82M-v1.0-ONNX`](https://huggingface.co/onnx-community/Kokoro-82M-v1.0-ONNX) quantizado em **q8** (cai para **q4** se o q8 falhar), rodando em **WebAssembly** num Web Worker (`src/worker-kokoro.js`), 100% no navegador.
+
+- **Tamanho:** ~92 MB do modelo na primeira vez + ~0,5 MB por voz. Fica na Cache API; depois funciona offline. O popup mostra o progresso do download e o estado "carregando".
+- **Vozes:** grupo "Kokoro (IA)" no seletor.
+  - English (US): `af_heart`, `af_bella`, `am_michael`
+  - English (UK): `bf_emma`, `bm_george`
+  - Português (Brasil), **experimental**: `pf_dora`, `pm_alex`, `pm_santa`
+- **Português:** os ids `pf_dora`, `pm_alex` e `pm_santa` existem no repositório do modelo, mas o `kokoro-js` 1.2.1 só aceita vozes em inglês (valida a voz e o fonemizador embutido só conhece inglês). Para contornar, a extensão fonemiza o texto com o espeak-ng `pt-br` que já vem empacotado para o Piper e entrega os fonemas ao modelo (`generate_from_ids`). A pronúncia pode ser menos natural que a do Piper em português, então prefira o Piper se não gostar.
+- **Desempenho:** em CPU (WASM) a síntese é mais pesada que a do Piper; o texto é dividido em trechos de até ~200 caracteres e sintetizado à frente da reprodução (até 3 trechos na fila). Em máquinas lentas ou com velocidade alta pode haver pequenas pausas. WebGPU não é usado (exigiria o modelo fp32 de ~300 MB).
+- **Licença:** modelo e pesos Apache 2.0.
 
 ## 🧠 Como funciona
 
@@ -119,6 +133,7 @@ Service workers não tocam áudio, então o Chrome oferece o *Offscreen Document
 | --- | --- |
 | `src/offscreen.js` | Fila de reprodução: toca o áudio por `AudioContext`, controla pausa e parada, avisa o início de cada frase. |
 | `src/worker-piper.js` | Web Worker do Piper: baixa a voz, fonemiza e sintetiza fora da thread de áudio. |
+| `src/worker-kokoro.js` | Web Worker do Kokoro: baixa/carrega o modelo e sintetiza (inglês via `kokoro-js`, português via espeak pt-br). |
 
 
 Cada frase passa por três etapas:
@@ -145,7 +160,8 @@ extensao-leitura/
 ├── offscreen.html       # documento que hospeda o motor de voz neural
 ├── src/
 │   ├── offscreen.js     # fila de áudio e controle de reprodução
-│   └── worker-piper.js  # download das vozes, fonemização e inferência do Piper
+│   ├── worker-piper.js  # download das vozes, fonemização e inferência do Piper
+│   └── worker-kokoro.js # modelo Kokoro-82M (kokoro-js): download, fonemização e inferência
 ├── build.mjs            # empacota src/ e copia os .wasm para dist/
 ├── icons/               # ícones da extensão
 └── dist/                # gerado por `npm run build` (não vai pro git)
@@ -160,7 +176,7 @@ extensao-leitura/
 ## 🔒 Privacidade
 
 - O texto da página **não sai do seu computador**: tanto as vozes do sistema quanto as neurais sintetizam localmente.
-- A única conexão externa é o download de cada voz neural no Hugging Face, na primeira vez que ela é usada.
+- A única conexão externa é o download de cada voz neural (ou do modelo Kokoro) no Hugging Face, na primeira vez que ela é usada.
 - As permissões são mínimas: `activeTab`, `scripting`, `tts`, `storage` e `offscreen`, mais acesso ao Hugging Face para baixar as vozes.
 
 ## ⚠️ Limitações

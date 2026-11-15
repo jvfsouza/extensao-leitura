@@ -47,13 +47,47 @@ const VOZES_PIPER = {
   ],
 };
 
+// Vozes neurais Kokoro-82M (IA, Apache 2.0). Modelo único de ~90 MB, baixado na 1ª vez. As vozes em português
+// (pf_/pm_) usam fonemização espeak pt-br própria da extensão (experimental); as em inglês usam o kokoro-js.
+const VOZES_KOKORO = {
+  "Português (Brasil) · experimental": [
+    { id: "pf_dora", nome: "Dora (feminina)" },
+    { id: "pm_alex", nome: "Alex (masculina)" },
+    { id: "pm_santa", nome: "Santa (masculina)" },
+  ],
+  "English (US)": [
+    { id: "af_heart", nome: "Heart (female)" },
+    { id: "af_bella", nome: "Bella (female)" },
+    { id: "am_michael", nome: "Michael (male)" },
+  ],
+  "English (UK)": [
+    { id: "bf_emma", nome: "Emma (female)" },
+    { id: "bm_george", nome: "George (male)" },
+  ],
+};
+const ehKokoro = () => $("voz").value.startsWith("kokoro:");
+const ehNeuralSel = () => /^(piper|kokoro):/.test($("voz").value);
+
 const esc = (s) => String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/"/g, "&quot;");
+
+// Mensagens de erro claras em português para as falhas mais comuns.
+function traduzirErro(msg) {
+  const m = String(msg || "desconhecido");
+  if (/Failed to fetch|NetworkError|Load failed|fetch/i.test(m)) return "sem conexão com huggingface.co para baixar o modelo. Verifique a internet e tente de novo.";
+  if (/memory|alloc|OOM/i.test(m)) return "memória insuficiente para o modelo. Feche abas pesadas e tente de novo.";
+  return m;
+}
 
 function mostrarEstadoNeural(e) {
   if (!e) return;
-  if (e.estado === "baixando") $("info").textContent = `Baixando a voz… ${e.pct ?? 0}% (só na primeira vez)`;
-  else if (e.estado === "erro") $("info").textContent = `Erro na voz neural: ${e.msg || "desconhecido"}`;
-  else if (e.estado === "pronto") $("info").textContent = "Lendo com voz neural…";
+  const k = ehKokoro();
+  if (e.estado === "baixando")
+    $("info").textContent = k
+      ? `Baixando o modelo Kokoro… ${e.pct ?? 0}% (~90 MB, só na primeira vez)`
+      : `Baixando a voz… ${e.pct ?? 0}% (só na primeira vez)`;
+  else if (e.estado === "carregando") $("info").textContent = "Carregando o modelo na memória…";
+  else if (e.estado === "erro") $("info").textContent = `Erro na voz neural: ${traduzirErro(e.msg)}`;
+  else if (e.estado === "pronto") $("info").textContent = k ? "Lendo com Kokoro (IA)…" : "Lendo com voz neural…";
 }
 chrome.runtime.onMessage.addListener((m) => {
   if (m.tipo === "p-estado") mostrarEstadoNeural(m);
@@ -68,6 +102,14 @@ async function carregarVozes() {
           ([grupo, lista]) =>
             `<optgroup label="${grupo} · neurais (offline)">` +
             lista.map((v) => `<option value="piper:${v.id}">${v.nome} · Piper</option>`).join("") +
+            `</optgroup>`,
+        )
+        .join("") +
+      Object.entries(VOZES_KOKORO)
+        .map(
+          ([grupo, lista]) =>
+            `<optgroup label="Kokoro (IA) · ${grupo}">` +
+            lista.map((v) => `<option value="kokoro:${v.id}">${v.nome} · Kokoro</option>`).join("") +
             `</optgroup>`,
         )
         .join("") +
@@ -99,7 +141,8 @@ $("ler").onclick = async () => {
     voiceName: $("voz").value,
     tabId: comDestaque ? abaExtraida : null,
   });
-  if ($("voz").value.startsWith("piper:")) $("info").textContent = "Preparando voz neural… (a 1ª vez baixa ~60 MB)";
+  if (ehKokoro()) $("info").textContent = "Preparando o Kokoro (IA)… (a 1ª vez baixa ~90 MB)";
+  else if (ehNeuralSel()) $("info").textContent = "Preparando voz neural… (a 1ª vez baixa ~60 MB)";
   else $("info").textContent = comDestaque ? "Lendo…" : "Lendo texto editado (sem destaque na página).";
   mostrarPausa(false);
 };
@@ -122,9 +165,24 @@ const pular = async (delta) => {
 $("pular").onclick = () => pular(1);
 $("anterior").onclick = () => pular(-1);
 
+// Se estiver lendo (ou pausado), aplica a nova velocidade/voz e recomeça da frase atual.
+// O slider dispara várias vezes ao arrastar, então espera um instante antes de aplicar.
+let timerConfig = null;
+function aplicarAoVivo() {
+  clearTimeout(timerConfig);
+  timerConfig = setTimeout(async () => {
+    const s = await enviar({ type: "status" }).catch(() => null);
+    if (!s || !(s.falando || s.pausado)) return;
+    await enviar({ type: "config", rate: Number($("vel").value), voiceName: $("voz").value });
+    if (ehNeuralSel()) $("info").textContent = "Trocando de voz… continua da frase atual.";
+    else $("info").textContent = "Continuando da frase atual com a nova configuração.";
+  }, 350);
+}
+
 $("vel").oninput = () => {
   $("velValor").value = Number($("vel").value).toFixed(1);
   chrome.storage.local.set({ vel: $("vel").value });
+  aplicarAoVivo();
 };
 // Digitar o valor: ao confirmar (Enter/sair do campo) limita ao intervalo e sincroniza o slider.
 const limitar = (v, min, max, dec) => Math.min(max, Math.max(min, Number.isFinite(v) ? v : min)).toFixed(dec);
@@ -132,7 +190,10 @@ $("velValor").onchange = () => {
   $("vel").value = limitar(parseFloat(String($("velValor").value).replace(",", ".")), 0.5, 2.5, 1);
   $("vel").oninput();
 };
-$("voz").onchange = () => chrome.storage.local.set({ voz: $("voz").value });
+$("voz").onchange = () => {
+  chrome.storage.local.set({ voz: $("voz").value });
+  aplicarAoVivo();
+};
 
 // Cor/opacidade do destaque: salvas no storage; o content.js aplica ao vivo na página.
 function hexParaRgba(hex, a) {

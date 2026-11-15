@@ -2,7 +2,7 @@
 // roda num Web Worker (src/worker-piper.js), assim esta thread fica livre para tocar
 // áudio e atender pausar/parar sem atraso.
 
-const motores = {}; // nome do motor ("piper") -> { worker, pendentes }
+const motores = {}; // nome do motor ("piper" | "kokoro") -> { worker, pendentes }
 let proxId = 0;
 
 function motor(nome) {
@@ -71,7 +71,7 @@ function manterVivo() {
   const c = obterCtx();
   const osc = c.createOscillator();
   const ganho = c.createGain();
-  ganho.gain.value = 0.0003;
+  ganho.gain.value = 0.004; // margem sobre o limiar de silêncio do Chrome (~-72 dBFS), senão o documento fecha em 30 s
   osc.frequency.value = 40;
   osc.connect(ganho).connect(c.destination);
   osc.start();
@@ -176,7 +176,7 @@ async function falar({ sessao, textos, voz, velocidade }) {
 
   const itens = [];
   textos.forEach((texto, bloco) => {
-    const partes = partirTexto(texto).filter((p) => /[\p{L}\p{N}]/u.test(p));
+    const partes = partirTexto(texto, nomeMotor === "kokoro" ? 200 : 260).filter((p) => /[\p{L}\p{N}]/u.test(p));
     if (!partes.length) itens.push({ bloco, texto: null, primeira: true, ultima: true });
     else partes.forEach((p, k) => itens.push({ bloco, texto: p, primeira: k === 0, ultima: k === partes.length - 1 }));
   });
