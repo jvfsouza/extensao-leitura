@@ -1,0 +1,7 @@
+/* Injetado na página via chrome.scripting.insertCSS (imune a CSP da página). */
+::highlight(leitor-frase) {
+  background-color: rgba(77, 134, 245, 0.28);
+}
+::highlight(leitor-palavra) {
+  background-color: rgba(47, 111, 237, 0.5);
+}

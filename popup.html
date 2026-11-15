@@ -1,0 +1,189 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="color-scheme" content="light dark">
+  <style>
+    :root {
+      --bg: #f6f8fb;
+      --surface: #ffffff;
+      --surface-2: #edf1f6;
+      --border: rgba(20, 35, 60, 0.12);
+      --text: #22201b;
+      --muted: #7a766d;
+      --accent: #2f6fed;
+      --accent-2: #ff8a00;
+      --accent-text: #ffffff;
+      --accent-soft: rgba(47, 111, 237, 0.2);
+      --shadow: none;
+      --radius: 22px;
+      --radius-sm: 14px;
+      --pill: 16px;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg: #14171c;
+        --surface: #1d2129;
+        --surface-2: #272c36;
+        --accent: #4d86f5;
+        --border: rgba(255, 255, 255, 0.1);
+        --text: #eef0f4;
+        --muted: #9a9fab;
+        --accent-soft: rgba(91, 141, 245, 0.28);
+        --shadow: none;
+      }
+    }
+
+    * { box-sizing: border-box; }
+    body {
+      width: 320px;
+      margin: 0;
+      padding: 12px;
+      background: var(--bg);
+      color: var(--text);
+      font: 13px/1.35 system-ui, -apple-system, "Segoe UI", sans-serif;
+    }
+
+    header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
+    h1 { margin: 0; font-size: 14px; font-weight: 700; letter-spacing: -.1px; display: flex; align-items: center; }
+    h1 img { width: 18px; height: 18px; margin-right: 8px; border-radius: 8px; }
+
+    button {
+      font: inherit; font-weight: 550; color: inherit; cursor: pointer;
+      padding: 6px 10px; border-radius: var(--pill);
+      border: 1px solid var(--border); background: var(--surface-2);
+      transition: background .15s, box-shadow .15s, transform .08s, filter .15s;
+    }
+    button:hover { background: var(--surface); border-color: rgba(47, 111, 237, 0.45); }
+    button:active { transform: scale(.97); }
+    button:focus-visible, select:focus-visible, textarea:focus-visible, input:focus-visible {
+      outline: 2px solid var(--accent); outline-offset: 2px;
+    }
+    button.primario {
+      background: var(--accent); border-color: var(--accent);
+      color: var(--accent-text); font-weight: 650;
+    }
+    button.primario:hover { background: var(--accent); filter: brightness(1.05); box-shadow: none; }
+
+    .linha { display: flex; gap: 6px; margin-bottom: 8px; }
+    .linha > button { flex: 1; padding: 6px 8px; font-size: 12px; }
+
+    .controles { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-bottom: 6px; }
+    .player { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 6px; margin-bottom: 10px; }
+    .player button { display: flex; align-items: center; justify-content: center; padding: 5px; }
+    .player svg { width: 18px; height: 18px; fill: currentColor; }
+
+    .painel {
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: var(--radius); padding: 12px 14px; margin-bottom: 10px;
+      box-shadow: var(--shadow);
+    }
+    .campo { display: flex; flex-direction: column; gap: 4px; }
+    .campo + .campo { margin-top: 10px; }
+    label { font-size: 11px; font-weight: 550; color: var(--muted); display: flex; justify-content: space-between; }
+    label b { color: var(--text); font-weight: 600; }
+
+    select {
+      width: 100%; padding: 6px 10px; font: inherit; color: var(--text);
+      background: var(--surface-2); border: 1px solid transparent; border-radius: var(--radius-sm);
+    }
+    input[type=range] { width: 100%; accent-color: var(--accent); margin: 2px 0 0; }
+
+    .hl-linha { display: flex; align-items: center; gap: 10px; }
+    .hl-linha input[type=range] { flex: 1; margin: 0; }
+    .num { display: inline-flex; align-items: center; gap: 2px; color: var(--text); font-weight: 600; }
+    .num input {
+      width: 46px; padding: 2px 4px; font: inherit; font-weight: 600; text-align: right; color: var(--text);
+      background: var(--surface-2); border: 1px solid transparent; border-radius: 8px; -moz-appearance: textfield;
+    }
+    .num input:hover { border-color: var(--border); }
+    .num input:focus { border-color: var(--accent); outline: none; }
+    .hl-linha .num { min-width: 52px; justify-content: flex-end; font-size: 12px; }
+    .hl-linha b { font-size: 12px; min-width: 34px; text-align: right; font-weight: 600; }
+    input[type=color] {
+      width: 30px; height: 24px; padding: 2px; cursor: pointer;
+      background: var(--surface-2); border: 1px solid var(--border); border-radius: 12px;
+    }
+    .gota { display: flex; align-items: center; justify-content: center; width: 30px; height: 24px; padding: 0; border-radius: 12px; color: var(--muted); }
+    .gota:hover { color: var(--accent); }
+    .gota svg { width: 15px; height: 15px; }
+    .favs { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 8px; }
+    .fav {
+      position: relative; width: 22px; height: 22px; padding: 0; border-radius: 50%;
+      border: 2px solid var(--surface); box-shadow: 0 0 0 1px var(--border);
+    }
+    .fav:hover { transform: scale(1.12); }
+    .fav.ativa { box-shadow: 0 0 0 2px var(--accent); }
+    .fav-add { display: flex; align-items: center; justify-content: center; color: var(--muted);
+      background: var(--surface-2); font-size: 15px; line-height: 1; border-style: dashed; border-color: var(--border); }
+    .fav-add:hover { color: var(--accent); }
+    .favs-dica { flex-basis: 100%; font-size: 10.5px; color: var(--muted); }
+    #hlPrev { padding: 1px 8px; border-radius: 8px; color: var(--text); }
+
+    textarea {
+      display: block; width: 100%; height: 100px; resize: vertical;
+      padding: 10px 12px; font: inherit; line-height: 1.55; color: var(--text);
+      background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
+      box-shadow: var(--shadow);
+    }
+    textarea::placeholder { color: var(--muted); }
+
+    .acoes { margin: 8px 0 6px; }
+    #info { display: block; color: var(--muted); font-size: 11px; min-height: 14px; text-align: center; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1><img src="icons/icon48.png" alt="">Leitor de Páginas</h1>
+  </header>
+
+  <div class="controles">
+    <button id="ler" class="primario">Ler</button>
+    <button id="parar">Parar</button>
+  </div>
+
+  <div class="player">
+    <button id="anterior" title="Voltar uma frase" aria-label="Voltar uma frase">
+      <svg viewBox="0 0 24 24"><path d="M6 6h2v12H6zM20 6v12L9.5 12z"/></svg>
+    </button>
+    <button id="pausar" title="Pausar" aria-label="Pausar"></button>
+    <button id="pular" title="Avançar uma frase" aria-label="Avançar uma frase">
+      <svg viewBox="0 0 24 24"><path d="M16 6h2v12h-2zM4 6v12l10.5-6z"/></svg>
+    </button>
+  </div>
+
+  <div class="painel">
+    <div class="campo">
+      <label for="voz">Voz</label>
+      <select id="voz"></select>
+    </div>
+    <div class="campo">
+      <label for="vel">Velocidade <span class="num"><input id="velValor" type="number" min="0.5" max="2.5" step="0.1" value="1.0" aria-label="Velocidade (valor)">x</span></label>
+      <input id="vel" type="range" min="0.5" max="2.5" step="0.1" value="1">
+    </div>
+    <div class="campo">
+      <label for="hlCor">Destaque na página <b id="hlPrev">texto lido</b></label>
+      <div class="hl-linha">
+        <input id="hlCor" type="color" value="#2f6fed" aria-label="Cor do destaque">
+        <button id="hlGota" class="gota" title="Escolher cor (conta-gotas)" aria-label="Escolher cor do destaque">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m2 22 1-1h3l9-9"/><path d="M3 21v-3l9-9"/><path d="m15 6 3.4-3.4a2.1 2.1 0 1 1 3 3L18 9l.4.4a2.1 2.1 0 1 1-3 3l-3.8-3.8a2.1 2.1 0 1 1 3-3l.4.4Z"/></svg>
+        </button>
+        <input id="hlOp" type="range" min="10" max="100" step="5" value="50" aria-label="Opacidade do destaque">
+        <span class="num"><input id="hlOpValor" type="number" min="10" max="100" step="5" value="50" aria-label="Opacidade (valor)">%</span>
+      </div>
+      <div class="favs" id="hlFavs" aria-label="Cores favoritas"></div>
+    </div>
+  </div>
+
+  <textarea id="texto" placeholder="O texto extraído aparece aqui. Você pode editar antes de ler (a leitura editada não destaca a página)."></textarea>
+
+  <div class="linha acoes">
+    <button id="extrair">Extrair texto</button>
+    <button id="copiar">Copiar</button>
+    <button id="baixar">Baixar .txt</button>
+  </div>
+
+  <small id="info">Dica: selecione um trecho na página para extrair só ele.</small>
+  <script src="popup.js"></script>
+</body>
+</html>
