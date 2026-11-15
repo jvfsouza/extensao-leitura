@@ -47,7 +47,7 @@ const VOZES_PIPER = {
   ],
 };
 
-// Vozes neurais Kokoro-82M (IA, Apache 2.0). Modelo único de ~90 MB, baixado na 1ª vez. As vozes em português
+// Vozes neurais Kokoro-82M (IA, Apache 2.0). Modelo único (~177 MB em CPU, ~326 MB com WebGPU), baixado na 1ª vez. As vozes em português
 // (pf_/pm_) usam fonemização espeak pt-br própria da extensão (experimental); as em inglês usam o kokoro-js.
 const VOZES_KOKORO = {
   "Português (Brasil) · experimental": [
@@ -65,6 +65,13 @@ const VOZES_KOKORO = {
     { id: "bm_george", nome: "George (male)" },
   ],
 };
+// Tamanho do download do Kokoro: com WebGPU usa o modelo fp32 (~326 MB, ~3x mais rápido); sem, o uint8 (~177 MB).
+let kokoroMB = 177;
+(async () => {
+  try {
+    if (navigator.gpu && (await navigator.gpu.requestAdapter())) kokoroMB = 326;
+  } catch {}
+})();
 const ehKokoro = () => $("voz").value.startsWith("kokoro:");
 const ehNeuralSel = () => /^(piper|kokoro):/.test($("voz").value);
 
@@ -83,9 +90,10 @@ function mostrarEstadoNeural(e) {
   const k = ehKokoro();
   if (e.estado === "baixando")
     $("info").textContent = k
-      ? `Baixando o modelo Kokoro… ${e.pct ?? 0}% (~90 MB, só na primeira vez)`
+      ? `Baixando o modelo Kokoro… ${e.pct ?? 0}% (~${e.mb || kokoroMB} MB, só na primeira vez)`
       : `Baixando a voz… ${e.pct ?? 0}% (só na primeira vez)`;
   else if (e.estado === "carregando") $("info").textContent = "Carregando o modelo na memória…";
+  else if (e.estado === "buffer") $("info").textContent = "Preparando áudio… (buffer)";
   else if (e.estado === "erro") $("info").textContent = `Erro na voz neural: ${traduzirErro(e.msg)}`;
   else if (e.estado === "pronto") $("info").textContent = k ? "Lendo com Kokoro (IA)…" : "Lendo com voz neural…";
 }
@@ -141,7 +149,7 @@ $("ler").onclick = async () => {
     voiceName: $("voz").value,
     tabId: comDestaque ? abaExtraida : null,
   });
-  if (ehKokoro()) $("info").textContent = "Preparando o Kokoro (IA)… (a 1ª vez baixa ~90 MB)";
+  if (ehKokoro()) $("info").textContent = `Preparando o Kokoro (IA)… (a 1ª vez baixa ~${kokoroMB} MB)`;
   else if (ehNeuralSel()) $("info").textContent = "Preparando voz neural… (a 1ª vez baixa ~60 MB)";
   else $("info").textContent = comDestaque ? "Lendo…" : "Lendo texto editado (sem destaque na página).";
   mostrarPausa(false);

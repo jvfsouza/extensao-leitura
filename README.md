@@ -19,7 +19,7 @@
 - ✂️ **Lê só um trecho:** selecione o que quiser na página antes de clicar em *Ler*.
 - 🎙️ **Três tipos de voz:**
   - **Vozes neurais offline (Piper):** 4 em português do Brasil e 5 em inglês (EUA e Reino Unido). Rodam no próprio navegador e são leves (~60 MB cada).
-  - **Vozes Kokoro (IA, offline):** modelo Kokoro-82M (82M parâmetros, Apache 2.0) com vozes em inglês (EUA/Reino Unido) e, em modo experimental, português do Brasil. Um único download de ~90 MB. Veja [Kokoro](#-kokoro-ia).
+  - **Vozes Kokoro (IA, offline):** modelo Kokoro-82M (82M parâmetros, Apache 2.0) com vozes em inglês (EUA/Reino Unido) e, em modo experimental, português do Brasil. Um único download (~177 MB em CPU, ~326 MB com WebGPU). Veja [Kokoro](#-kokoro-ia).
   - **Vozes do sistema** (`chrome.tts`): funcionam na hora, sem baixar nada, em qualquer idioma que o seu sistema tiver.
 - 🖍️ **Destaque ao vivo na página:** a frase atual fica marcada e a palavra também (nas vozes do sistema). A página rola sozinha acompanhando a leitura.
 - 🎨 **Cor e opacidade do destaque** ajustáveis no popup.
@@ -70,15 +70,21 @@ O Piper tem muito mais vozes (alemão, espanhol, francês...). Para adicionar um
 
 ## 🤖 Kokoro (IA)
 
-Segundo motor neural, ao lado do Piper (que continua igual). Usa o pacote [`kokoro-js`](https://github.com/hexgrad/kokoro) (v1.2.1) com o modelo [`onnx-community/Kokoro-82M-v1.0-ONNX`](https://huggingface.co/onnx-community/Kokoro-82M-v1.0-ONNX) quantizado em **q8** (cai para **q4** se o q8 falhar), rodando em **WebAssembly** num Web Worker (`src/worker-kokoro.js`), 100% no navegador.
+Segundo motor neural, ao lado do Piper (que continua igual). Usa o pacote [`kokoro-js`](https://github.com/hexgrad/kokoro) (v1.2.1) com o modelo [`onnx-community/Kokoro-82M-v1.0-ONNX`](https://huggingface.co/onnx-community/Kokoro-82M-v1.0-ONNX) num Web Worker (`src/worker-kokoro.js`), 100% no navegador. O motor é escolhido sozinho: **WebGPU** (modelo fp32) quando o navegador tem GPU compatível, senão **WebAssembly/CPU** (modelo uint8; q8 se o uint8 falhar).
 
-- **Tamanho:** ~92 MB do modelo na primeira vez + ~0,5 MB por voz. Fica na Cache API; depois funciona offline. O popup mostra o progresso do download e o estado "carregando".
+- **Tamanho:** na primeira vez, **~326 MB** (fp32, com WebGPU) ou **~177 MB** (uint8, sem WebGPU), mais ~0,5 MB por voz. O popup mostra o tamanho e o progresso. Fica na Cache API; depois funciona offline. O popup mostra o progresso do download e o estado "carregando".
 - **Vozes:** grupo "Kokoro (IA)" no seletor.
   - English (US): `af_heart`, `af_bella`, `am_michael`
   - English (UK): `bf_emma`, `bm_george`
   - Português (Brasil), **experimental**: `pf_dora`, `pm_alex`, `pm_santa`
 - **Português:** os ids `pf_dora`, `pm_alex` e `pm_santa` existem no repositório do modelo, mas o `kokoro-js` 1.2.1 só aceita vozes em inglês (valida a voz e o fonemizador embutido só conhece inglês). Para contornar, a extensão fonemiza o texto com o espeak-ng `pt-br` que já vem empacotado para o Piper e entrega os fonemas ao modelo (`generate_from_ids`). A pronúncia pode ser menos natural que a do Piper em português, então prefira o Piper se não gostar.
-- **Desempenho:** em CPU (WASM) a síntese é mais pesada que a do Piper; o texto é dividido em trechos de até ~200 caracteres e sintetizado à frente da reprodução (até 3 trechos na fila). Em máquinas lentas ou com velocidade alta pode haver pequenas pausas. WebGPU não é usado (exigiria o modelo fp32 de ~300 MB).
+- **Desempenho (leitura contínua):** medido num PC de 12 núcleos (Chrome com janela, texto de ~60 s de áudio):
+  - **Antes** (CPU, q8): RTF ~1,2-1,4 (mais lento que a fala) -> 4 pausas de 2,8 a 10 s (25 s no total) e 7 s até a 1ª fala.
+  - **WebGPU fp32:** RTF ~0,4; fala em ~2 s e **sem pausas**.
+  - **CPU (WASM uint8, 4 threads):** RTF ~0,6, também sem pausas. O q8 (~92 MB, antigo padrão) é ~2x mais lento que o uint8, por isso foi trocado.
+  - Mais threads não ajudam na CPU (4 = 8 = 12; 1 thread é ~1,6x mais lenta). O fp16 (~163 MB) foi descartado: devolve áudio mudo (NaN) neste onnxruntime-web.
+  - O WebGPU é validado com uma síntese de teste ao carregar; se falhar (ou falhar depois, em runtime), a extensão volta sozinha para a CPU/uint8. Se o RTF ficar acima de 1 (PC lento), o app mede ao vivo e espera acumular áudio ("Preparando áudio… (buffer)") para ter poucas pausas longas em vez de várias picotadas.
+  - Agendamento: o 1º trecho é curto (~85 caracteres) e o 2º médio (~130), depois ~220; a fila de pré-síntese guarda ~20 s de áudio à frente.
 - **Licença:** modelo e pesos Apache 2.0.
 
 ## 🧠 Como funciona

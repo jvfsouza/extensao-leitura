@@ -6,32 +6,77 @@
 // (vozes pf_/pm_) o texto é fonemizado aqui com o espeak-ng "pt-br" do piper_phonemize (já empacotado para o
 // Piper) e os fonemas vão direto ao modelo via generate_from_ids. É um caminho experimental (ver README).
 import { KokoroTTS, env } from "kokoro-js";
+import { env as tenv } from "@huggingface/transformers"; // o env do kokoro-js só expõe wasmPaths; o do transformers dá acesso a env.backends.onnx
 
 const MODELO = "onnx-community/Kokoro-82M-v1.0-ONNX";
-const DTYPES = ["q8", "q4"]; // q8 (~92 MB); q4 como alternativa se q8 falhar
 
 let base = ""; // URL raiz da extensão (chrome.runtime.getURL(""))
 let tts = null; // Promise<KokoroTTS>
+let cfg = {}; // ajustes de teste: { device, dtype, threads }
+let falhas = []; // motivos de candidatos descartados (diagnóstico)
+let escolhido = null; // { device, dtype } efetivamente em uso
 
 function estado(estado, extra = {}) {
   self.postMessage({ tipo: "estado", estado, ...extra });
 }
 
 // ---------- Modelo ----------
+//
+// Motor de inferência, em ordem de preferência (RTF = tempo de síntese / duração do áudio; medido num PC de 12 núcleos):
+//  1. WebGPU + fp32 (~326 MB): RTF ~0,4. Só se houver adapter WebGPU; é validado com uma síntese de teste
+//     (som finito e não mudo) e, se falhar (ou falhar depois, em runtime), cai para o WASM.
+//     O fp16 (~163 MB) foi descartado: no onnxruntime-web deste projeto devolve só NaN (áudio mudo).
+//  2. WASM (CPU) + uint8 (~177 MB): RTF ~0,6, 4 threads (4 = 8 = 12 threads; 1 thread é ~1,6x mais lento).
+//  3. WASM + q8 (~92 MB): RTF ~1,2-1,4 (mais lento que a fala), só se o uint8 não carregar.
+
+async function temWebGPU() {
+  try {
+    return !!(self.navigator?.gpu && (await self.navigator.gpu.requestAdapter()));
+  } catch {
+    return false;
+  }
+}
+
+let semWebGPU = false; // WebGPU falhou nesta sessão (carregamento ou 1ª síntese): não tenta de novo
+
+async function candidatos() {
+  if (cfg.device && cfg.device !== "auto") return [{ device: cfg.device, dtype: cfg.dtype || (cfg.device === "webgpu" ? "fp32" : "q8") }];
+  const l = [];
+  if (!semWebGPU && (await temWebGPU())) l.push({ device: "webgpu", dtype: "fp32" });
+  l.push({ device: "wasm", dtype: "uint8" }, { device: "wasm", dtype: "q8" });
+  return l;
+}
+
+const estatAudio = (pcm) => {
+  let pico = 0, soma = 0, ruins = 0;
+  for (let i = 0; i < pcm.length; i++) {
+    const v = pcm[i];
+    if (!Number.isFinite(v)) { ruins++; continue; }
+    if (Math.abs(v) > pico) pico = Math.abs(v);
+    soma += v * v;
+  }
+  return { n: pcm.length, pico, rms: Math.sqrt(soma / (pcm.length || 1)), ruins };
+};
+const audioValido = (pcm) => {
+  const e = estatAudio(pcm);
+  return e.ruins === 0 && e.n > 1000 && e.pico > 0.02;
+};
 
 function carregarModelo() {
   if (!tts) {
     tts = (async () => {
       env.wasmPaths = base + "dist/kokoro/";
+      const nucleos = self.navigator?.hardwareConcurrency || 4;
+      tenv.backends.onnx.wasm.numThreads = cfg.threads || Math.min(4, Math.max(2, Math.floor(nucleos / 2)));
       let ultimo;
-      for (const dtype of DTYPES) {
+      for (const cand of await candidatos()) {
         const arquivos = new Map(); // arquivo -> { loaded, total }
         let ultimoPct = -1; // o callback dispara milhares de vezes; só avisa quando a % muda
         estado("baixando", { pct: 0 });
         try {
           const modelo = await KokoroTTS.from_pretrained(MODELO, {
-            dtype,
-            device: "wasm",
+            dtype: cand.dtype,
+            device: cand.device,
             progress_callback: (p) => {
               if (p.status === "progress" && p.file) {
                 arquivos.set(p.file, { loaded: p.loaded, total: p.total });
@@ -40,7 +85,7 @@ function carregarModelo() {
                 const pct = t ? Math.min(99, Math.round((l / t) * 100)) : 0;
                 if (pct !== ultimoPct) {
                   ultimoPct = pct;
-                  estado("baixando", { pct });
+                  estado("baixando", { pct, mb: Math.round(t / 1e6) });
                 }
               } else if (p.status === "ready") {
                 estado("carregando");
@@ -48,10 +93,18 @@ function carregarModelo() {
             },
           });
           estado("carregando");
+          if (cand.device === "webgpu") {
+            // Síntese de teste: valida o resultado e já compila os shaders (senão a 1ª frase real demora ~4 s a mais).
+            const t = await modelo.generate("Hello, this is a test.", { voice: "af_heart" });
+            if (cfg.simularFalhaGpu || !audioValido(t.audio)) throw new Error("WebGPU produziu áudio inválido " + JSON.stringify(estatAudio(t.audio)));
+          }
+          escolhido = cand;
           estado("pronto");
           return modelo;
         } catch (e) {
-          console.warn(`Kokoro: falha com dtype ${dtype}`, e);
+          console.warn(`Kokoro: falha com ${cand.device}/${cand.dtype}`, e);
+          falhas.push(`${cand.device}/${cand.dtype}: ${e?.message || e}`);
+          if (cand.device === "webgpu") semWebGPU = true;
           ultimo = e;
         }
       }
@@ -101,16 +154,32 @@ function ajustarFonemas(f) {
 
 const ehPortugues = (voz) => voz.startsWith("p");
 
-async function sintetizar(texto, voz, velocidade) {
-  const modelo = await carregarModelo();
-  let audio;
+async function gerar(modelo, texto, voz, velocidade) {
   if (ehPortugues(voz)) {
     const fonemas = ajustarFonemas(await fonemasPtBr(texto));
     if (!fonemas) throw new Error("Não consegui converter o texto em fonemas.");
     const { input_ids } = modelo.tokenizer(fonemas, { truncation: true });
-    audio = await modelo.generate_from_ids(input_ids, { voice: voz, speed: velocidade });
-  } else {
-    audio = await modelo.generate(texto, { voice: voz, speed: velocidade });
+    return modelo.generate_from_ids(input_ids, { voice: voz, speed: velocidade });
+  }
+  return modelo.generate(texto, { voice: voz, speed: velocidade });
+}
+
+async function sintetizar(texto, voz, velocidade) {
+  let modelo = await carregarModelo();
+  let audio;
+  try {
+    audio = await gerar(modelo, texto, voz, velocidade);
+    if (cfg.simularFalhaGpuRuntime && escolhido?.device === "webgpu") throw new Error("falha simulada");
+    if (escolhido?.device === "webgpu" && !audioValido(audio.audio)) throw new Error("WebGPU produziu áudio inválido");
+  } catch (e) {
+    if (escolhido?.device !== "webgpu") throw e;
+    // Falha em runtime no WebGPU (perda de dispositivo, shader, memória…): refaz tudo no WASM e segue.
+    console.warn("Kokoro: WebGPU falhou na síntese; voltando para WASM", e);
+    semWebGPU = true;
+    tts = null;
+    escolhido = null;
+    modelo = await carregarModelo();
+    audio = await gerar(modelo, texto, voz, velocidade);
   }
   const pcm = new Float32Array(audio.audio); // cópia própria, transferível
   return { pcm, sr: audio.sampling_rate };
@@ -121,12 +190,15 @@ self.onmessage = async ({ data }) => {
   try {
     if (tipo === "init") {
       base = data.base;
+      if (data.cfg) cfg = data.cfg;
     } else if (tipo === "carregar") {
+      const t0 = performance.now();
       await carregarModelo();
-      self.postMessage({ tipo: "ok", id });
+      self.postMessage({ tipo: "ok", id, ms: performance.now() - t0, motor: escolhido, falhas, threads: tenv.backends.onnx.wasm.numThreads });
     } else if (tipo === "sintetizar") {
+      const t0 = performance.now();
       const r = await sintetizar(data.texto, data.voz, data.velocidade);
-      self.postMessage({ tipo: "audio", id, pcm: r.pcm, sr: r.sr }, [r.pcm.buffer]);
+      self.postMessage({ tipo: "audio", id, pcm: r.pcm, sr: r.sr, ms: performance.now() - t0 }, [r.pcm.buffer]);
     }
   } catch (e) {
     console.error(e);
