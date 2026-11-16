@@ -114,7 +114,13 @@
       }
       if (!norm) continue;
 
-      if (mudouBloco) texto += "\n\n";
+      // A quebra de linha guarda a estrutura (a voz neural a transforma em pausa): título = 3 (pausa longa),
+      // itens de lista seguidos = 1 (curta), o resto = 2 (parágrafo). Os offsets dos segmentos seguem corretos.
+      if (mudouBloco) {
+        const titulo = (b) => b && /^H[1-6]$/.test(b.tagName);
+        const item = (b) => b && b.tagName === "LI";
+        texto += titulo(bloco) || titulo(blocoAnterior) ? "\n\n\n" : item(bloco) && item(blocoAnterior) ? "\n" : "\n\n";
+      }
       segmentos.push({ ini: texto.length, len: norm.length, node: n, mapa });
       texto += norm;
       blocoAnterior = bloco;

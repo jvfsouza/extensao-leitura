@@ -67,11 +67,37 @@ const VOZES_KOKORO = {
 };
 // Tamanho do download do Kokoro: com WebGPU usa o modelo fp32 (~326 MB, ~3x mais rápido); sem, o uint8 (~177 MB).
 let kokoroMB = 177;
-(async () => {
+const gpuPronto = (async () => {
   try {
     if (navigator.gpu && (await navigator.gpu.requestAdapter())) kokoroMB = 326;
   } catch {}
 })();
+// Verifica na Cache API se o modelo já foi baixado (o popup e o motor usam a mesma origem da extensão).
+async function emCacheNeural(valor) {
+  await gpuPronto;
+  try {
+    const [motor, id] = [valor.slice(0, valor.indexOf(":")), valor.slice(valor.indexOf(":") + 1)];
+    if (motor === "piper") {
+      const c = await caches.open("piper-vozes-v1");
+      return (await c.keys()).some((r) => r.url.endsWith(`/${id}.onnx`));
+    }
+    const c = await caches.open("transformers-cache");
+    const base = "https://huggingface.co/onnx-community/Kokoro-82M-v1.0-ONNX/resolve/main/onnx/";
+    const gpu = kokoroMB === 326;
+    return !!((gpu && (await c.match(base + "model.onnx"))) || (await c.match(base + "model_uint8.onnx")));
+  } catch {
+    return false;
+  }
+}
+async function avisoInstalacao() {
+  const v = $("voz").value;
+  if (!/^(piper|kokoro):/.test(v)) return;
+  const k = v.startsWith("kokoro:");
+  const ok = await emCacheNeural(v);
+  if ($("voz").value !== v) return; // trocou de voz enquanto verificava
+  if (ok) $("info").textContent = `${k ? "Kokoro" : "Voz"} já instalado ✓ — carrega do cache, sem baixar nada.`;
+  else $("info").textContent = k ? `Kokoro ainda não instalado: baixa ~${kokoroMB} MB na primeira leitura (depois fica salvo).` : "Voz ainda não instalada: baixa ~60 MB na primeira leitura (depois fica salva).";
+}
 const ehKokoro = () => $("voz").value.startsWith("kokoro:");
 const ehNeuralSel = () => /^(piper|kokoro):/.test($("voz").value);
 
@@ -128,6 +154,7 @@ async function carregarVozes() {
       `</optgroup>`;
     chrome.storage.local.get(["voz", "vel"], ({ voz, vel }) => {
       if (voz) $("voz").value = voz;
+      avisoInstalacao();
       if (vel) { $("vel").value = vel; $("velValor").value = Number(vel).toFixed(1); }
     });
   });
@@ -149,8 +176,11 @@ $("ler").onclick = async () => {
     voiceName: $("voz").value,
     tabId: comDestaque ? abaExtraida : null,
   });
-  if (ehKokoro()) $("info").textContent = `Preparando o Kokoro (IA)… (a 1ª vez baixa ~${kokoroMB} MB)`;
-  else if (ehNeuralSel()) $("info").textContent = "Preparando voz neural… (a 1ª vez baixa ~60 MB)";
+  if (ehNeuralSel()) {
+    const k = ehKokoro();
+    const ok = await emCacheNeural($("voz").value);
+    $("info").textContent = ok ? `Carregando ${k ? "o Kokoro (IA)" : "a voz neural"} do cache…` : k ? `Baixando o Kokoro (IA)… (~${kokoroMB} MB, só na primeira vez)` : "Baixando a voz neural… (~60 MB, só na primeira vez)";
+  }
   else $("info").textContent = comDestaque ? "Lendo…" : "Lendo texto editado (sem destaque na página).";
   mostrarPausa(false);
 };
@@ -199,6 +229,7 @@ $("velValor").onchange = () => {
   $("vel").oninput();
 };
 $("voz").onchange = () => {
+  avisoInstalacao();
   chrome.storage.local.set({ voz: $("voz").value });
   aplicarAoVivo();
 };

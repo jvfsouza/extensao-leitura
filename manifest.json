@@ -3,7 +3,7 @@
   "name": "Leitor de Páginas",
   "version": "1.0",
   "description": "Extrai o texto da página e lê em voz alta (TTS), com vozes neurais offline (Piper e Kokoro) em português e inglês.",
-  "permissions": ["activeTab", "scripting", "tts", "storage", "offscreen"],
+  "permissions": ["activeTab", "scripting", "tts", "storage", "offscreen", "unlimitedStorage"],
   "host_permissions": ["https://huggingface.co/*", "https://*.hf.co/*", "https://*.huggingface.co/*"],
   "background": { "service_worker": "background.js" },
   "content_security_policy": {

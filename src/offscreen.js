@@ -156,7 +156,7 @@ function adaptarTamanho(itens, idx) {
   if (it.texto.length <= maxC + 25) return;
   const c = cortar(it.texto, maxC, Math.round(maxC * 0.5));
   const a = it.texto.slice(0, c + 1).trim(), b = it.texto.slice(c + 1).trim();
-  if (a && b) itens.splice(idx, 1, { ...it, texto: a, ultima: false }, { ...it, texto: b, primeira: false });
+  if (a && b) itens.splice(idx, 1, { ...it, texto: a, ultima: false, pausaApos: 0 }, { ...it, texto: b, primeira: false });
 }
 
 function marcar(tipo, extra = {}) {
@@ -275,10 +275,23 @@ async function falar({ sessao, textos, voz, velocidade }) {
   const { nome: nomeMotor, voz: vozId } = separar(voz);
 
   const itens = [];
+  const vel0 = Math.min(2.5, Math.max(0.5, velocidade || 1));
   textos.forEach((texto, bloco) => {
-    const partes = partirTexto(texto, nomeMotor === "kokoro" ? 220 : 260).filter((p) => /[\p{L}\p{N}]/u.test(p));
-    if (!partes.length) itens.push({ bloco, texto: null, primeira: true, ultima: true });
-    else partes.forEach((p, k) => itens.push({ bloco, texto: p, primeira: k === 0, ultima: k === partes.length - 1 }));
+    // Estrutura do texto -> pausas: 1 quebra = curta (item de lista), 2 = parágrafo, 3+ = título.
+    const flat = [];
+    for (const m of texto.matchAll(/([^\n]+)(\n*)/g)) {
+      const quebras = m[2].length;
+      const pausa = (quebras >= 3 ? 1.1 : quebras === 2 ? 0.7 : quebras === 1 ? 0.35 : 0) / Math.sqrt(vel0);
+      const partes = partirTexto(m[1], nomeMotor === "kokoro" ? 220 : 260).filter((p) => /[\p{L}\p{N}]/u.test(p));
+      partes.forEach((p, k) => {
+        const fim = k === partes.length - 1;
+        // Título/item sem pontuação final: o ponto faz a entonação cair, como no fim de uma frase.
+        if (fim && quebras && /[\p{L}\p{N})"'”\]]$/u.test(p)) p += ".";
+        flat.push({ bloco, texto: p, pausaApos: fim ? pausa : 0 });
+      });
+    }
+    if (!flat.length) itens.push({ bloco, texto: null, primeira: true, ultima: true });
+    else flat.forEach((it, k) => itens.push({ ...it, primeira: k === 0, ultima: k === flat.length - 1 }));
   });
   // Rampa: 1º trecho curto (começa a falar cedo) e 2º médio (precisa ficar pronto enquanto o 1º toca);
   // depois os trechos têm o tamanho normal.
@@ -288,7 +301,7 @@ async function falar({ sessao, textos, voz, velocidade }) {
       if (!it?.texto || it.texto.length <= lim + 30) return;
       const c = cortar(it.texto, lim, Math.round(lim * 0.5));
       const a = it.texto.slice(0, c + 1).trim(), b = it.texto.slice(c + 1).trim();
-      if (a && b) itens.splice(i, 1, { ...it, texto: a, ultima: false }, { ...it, texto: b, primeira: false });
+      if (a && b) itens.splice(i, 1, { ...it, texto: a, ultima: false, pausaApos: 0 }, { ...it, texto: b, primeira: false });
     });
   }
   charsRestantes = itens.reduce((a, i) => a + (i.texto?.length || 0), 0);
@@ -319,6 +332,13 @@ async function falar({ sessao, textos, voz, velocidade }) {
           perf.synth.push({ chars: item.texto.length, ms: Math.round(r.ms), dur: +dur.toFixed(2), rtf: +(r.ms / 1000 / dur).toFixed(2) });
         }
         charsRestantes -= item.texto.length;
+      }
+      // Pausa de estrutura (título/parágrafo/item): silêncio no fim do áudio, assim respeita pausar/retomar.
+      if (audio && item.pausaApos > 0 && idx < itens.length - 1) {
+        const mudo = Math.round(item.pausaApos * audio.sr);
+        const pcm = new Float32Array(audio.pcm.length + mudo);
+        pcm.set(audio.pcm);
+        audio = { ...audio, pcm };
       }
       prontos.push({ item, audio });
       tocarProximo(sessao);

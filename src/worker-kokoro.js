@@ -39,12 +39,26 @@ async function temWebGPU() {
 
 let semWebGPU = false; // WebGPU falhou nesta sessão (carregamento ou 1ª síntese): não tenta de novo
 
+// Arquivo de cada variante no repositório do modelo (a Cache API guarda pela URL).
+const ARQ = { fp32: "model.onnx", uint8: "model_uint8.onnx", q8: "model_quantized.onnx" };
+async function emCache(dtype) {
+  try {
+    const c = await caches.open("transformers-cache");
+    return !!(await c.match(`https://huggingface.co/${MODELO}/resolve/main/onnx/${ARQ[dtype]}`));
+  } catch {
+    return false;
+  }
+}
+
 async function candidatos() {
   if (cfg.device && cfg.device !== "auto") return [{ device: cfg.device, dtype: cfg.dtype || (cfg.device === "webgpu" ? "fp32" : "q8") }];
   const l = [];
   if (!semWebGPU && (await temWebGPU())) l.push({ device: "webgpu", dtype: "fp32" });
-  l.push({ device: "wasm", dtype: "uint8" }, { device: "wasm", dtype: "q8" });
-  return l;
+  l.push({ device: "wasm", dtype: "uint8" });
+  // Se só uma das variantes principais já está baixada, usa ela em vez de baixar outra (evita 326 MB à toa).
+  const baixadas = await Promise.all(l.map((c) => emCache(c.dtype)));
+  const prontas = l.filter((_, i) => baixadas[i]), faltam = l.filter((_, i) => !baixadas[i]);
+  return [...prontas, ...faltam, { device: "wasm", dtype: "q8" }];
 }
 
 const estatAudio = (pcm) => {
@@ -66,19 +80,21 @@ function carregarModelo() {
   if (!tts) {
     tts = (async () => {
       env.wasmPaths = base + "dist/kokoro/";
+      self.navigator?.storage?.persist?.().catch(() => {}); // pede armazenamento permanente: o Chrome não apaga o modelo sozinho
       const nucleos = self.navigator?.hardwareConcurrency || 4;
       tenv.backends.onnx.wasm.numThreads = cfg.threads || Math.min(4, Math.max(2, Math.floor(nucleos / 2)));
       let ultimo;
       for (const cand of await candidatos()) {
         const arquivos = new Map(); // arquivo -> { loaded, total }
         let ultimoPct = -1; // o callback dispara milhares de vezes; só avisa quando a % muda
-        estado("baixando", { pct: 0 });
+        const jaBaixado = await emCache(cand.dtype); // lendo do cache o progresso não é download
+        estado(jaBaixado ? "carregando" : "baixando", { pct: 0 });
         try {
           const modelo = await KokoroTTS.from_pretrained(MODELO, {
             dtype: cand.dtype,
             device: cand.device,
             progress_callback: (p) => {
-              if (p.status === "progress" && p.file) {
+              if (p.status === "progress" && p.file && !jaBaixado) {
                 arquivos.set(p.file, { loaded: p.loaded, total: p.total });
                 let l = 0, t = 0;
                 for (const a of arquivos.values()) { l += a.loaded; t += a.total; }
